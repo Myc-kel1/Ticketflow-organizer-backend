@@ -1,0 +1,14 @@
+app:
+  name: "Event Organizer Backend"
+  env: "development"
+  debug: true
+  api_prefix: "/api"
+
+supabase:
+  url: "https://jcfunenfhaeognlvooip.supabase.co"
+  service_role_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjZnVuZW5maGFlb2dubHZvb2lwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MDgyMjI0OSwiZXhwIjoyMDc2Mzk4MjQ5fQ.yG1IRkp8tD9eTgdwSyOFgjBCBqgfvL_-mt8Gfzx4IIU"
+  anon_key: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjZnVuZW5maGFlb2dubHZvb2lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjA4MjIyNDksImV4cCI6MjA3NjM5ODI0OX0.Pm1mOCV2SX8WkiAOuNlmxPwR3T7Gsbh71SE2tt3kfuE"
+  jwt_secret: "bCm3mhl2YEE9rCOg3x0qLFPahTeBfgIXlRtoY28K8rBiUdeEr+x6G7ytd3XwLtpV6OcTJlzIMx1GTEHuz6k9oA=="
+
+storage:
+  bucket_name: "event-images"
