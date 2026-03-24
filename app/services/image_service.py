@@ -2,12 +2,12 @@ from app.core.supabase import supabase
 from fastapi import UploadFile
 
 async def upload_event_image(file: UploadFile, event_id: str) -> str:
-    contents = await file.read()  # read as bytes — this is the critical fix
+    contents = await file.read()
     path = f"events/{event_id}/{file.filename}"
     
     supabase.storage.from_("event-images").upload(
         path,
-        contents,  # pass bytes, not file.file
+        contents,
         file_options={"content-type": file.content_type}
     )
     
@@ -19,4 +19,13 @@ async def upload_event_images(event_id: str, files: list[UploadFile]) -> list[st
     for file in files:
         url = await upload_event_image(file, event_id)
         image_urls.append(url)
-    return image_urls
+
+    # Fetch existing URLs so we don't overwrite previous uploads
+    result = supabase.table("events").select("image_urls").eq("id", event_id).single().execute()
+    existing_urls = result.data.get("image_urls") or []
+
+    # Merge and save back to the database
+    all_urls = existing_urls + image_urls
+    supabase.table("events").update({"image_urls": all_urls}).eq("id", event_id).execute()
+
+    return all_urls
