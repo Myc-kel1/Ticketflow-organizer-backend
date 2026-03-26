@@ -4,7 +4,7 @@ import json
 
 from app.schemas.event import EventCreate, EventUpdate, EventResponse
 from app.services.event_service import EventService
-from app.services.image_service import upload_event_image
+from app.services.image_service import upload_event_image, upload_event_images
 from app.schemas.images import ImageUploadResponse
 from app.dependencies.permissions import require_organizer
 
@@ -155,7 +155,7 @@ async def upload_event_images(
     )
     
     # Upload images
-    image_urls = await upload_event_image.upload_event_images(
+    image_urls = await upload_event_images(
         event_id=event_id,
         files=files
     )
