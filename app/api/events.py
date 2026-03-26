@@ -4,7 +4,7 @@ import json
 
 from app.schemas.event import EventCreate, EventUpdate, EventResponse
 from app.services.event_service import EventService
-from app.services.image_service import upload_event_image, upload_event_images
+from app.services.image_service import upload_event_image, upload_event_images as process_image_uploads
 from app.schemas.images import ImageUploadResponse
 from app.dependencies.permissions import require_organizer
 
@@ -52,7 +52,7 @@ async def create_event(
     # Upload images if provided
     if images and len(images) > 0:
         try:
-            image_urls = await upload_event_image.upload_event_images(
+            image_urls = await process_image_uploads(
                 event_id=event["id"],
                 files=images
             )
@@ -155,7 +155,7 @@ async def upload_event_images(
     )
     
     # Upload images
-    image_urls = await upload_event_images(
+    image_urls = await process_image_uploads(
         event_id=event_id,
         files=files
     )
