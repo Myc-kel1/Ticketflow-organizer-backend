@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from app.api import ticket_types
 
 from app.core.config import settings
 from app.api import auth, events, dashboard, tickets, scanner, sales
@@ -27,3 +28,4 @@ app.include_router(dashboard.router, prefix=settings.API_PREFIX)
 app.include_router(tickets.router, prefix=settings.API_PREFIX)
 app.include_router(scanner.router, prefix=settings.API_PREFIX)
 app.include_router(sales.router, prefix=settings.API_PREFIX) 
+app.include_router(ticket_types.router, prefix="/api")
