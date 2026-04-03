@@ -3,7 +3,7 @@
 from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status
 from datetime import datetime, timezone
-from app.core.supabase import supabase
+from app.core.supabase import supabase, supabase_admin
 
 
 class ScanService:
@@ -26,16 +26,11 @@ class ScanService:
 
     @staticmethod
     def scan_ticket(event_id: str, ticket_id: str, organizer_id: str) -> Dict[str, Any]:
-        """
-        Validate and check in a ticket by scanning its QR code.
-        The QR code encodes: TICKET_ID:EVENT_ID
-        The scanner extracts ticket_id and passes it here.
-        """
         # Verify organizer owns this event
         event = ScanService._verify_event_ownership(event_id, organizer_id)
 
-        # Look up the ticket
-        ticket_result = supabase.table("tickets")\
+        # Look up the ticket using service role to bypass RLS
+        ticket_result = supabase_admin.table("tickets")\
             .select("*, customer_profiles(full_name, email)")\
             .eq("id", ticket_id)\
             .eq("event_id", event_id)\
@@ -78,7 +73,7 @@ class ScanService:
 
         # Valid — mark as used
         now = datetime.now(timezone.utc).isoformat()
-        supabase.table("tickets").update({
+        supabase_admin.table("tickets").update({
             "status": "used",
             "checked_in_at": now
         }).eq("id", ticket_id).execute()
@@ -96,11 +91,10 @@ class ScanService:
 
     @staticmethod
     def get_event_stats(event_id: str, organizer_id: str) -> Dict[str, Any]:
-        """Get ticket sales and check-in stats for a specific event."""
         event = ScanService._verify_event_ownership(event_id, organizer_id)
 
-        # Fetch all tickets for this event
-        tickets_result = supabase.table("tickets")\
+        # Use service role to bypass RLS on tickets
+        tickets_result = supabase_admin.table("tickets")\
             .select("id, status, ticket_type_name")\
             .eq("event_id", event_id)\
             .execute()
@@ -110,8 +104,8 @@ class ScanService:
         tickets_checked_in = sum(1 for t in tickets if t["status"] == "used")
         tickets_active = sum(1 for t in tickets if t["status"] == "active")
 
-        # Fetch revenue from paid orders
-        orders_result = supabase.table("orders")\
+        # Use service role for orders
+        orders_result = supabase_admin.table("orders")\
             .select("amount, quantity")\
             .eq("event_id", event_id)\
             .eq("status", "paid")\
@@ -131,7 +125,7 @@ class ScanService:
                 type_counts[name]["checked_in"] += 1
 
         # Merge with ticket type capacity data
-        tt_result = supabase.table("ticket_types")\
+        tt_result = supabase_admin.table("ticket_types")\
             .select("name, quantity_available, quantity_sold, price")\
             .eq("event_id", event_id)\
             .execute()
@@ -168,10 +162,9 @@ class ScanService:
 
     @staticmethod
     def get_event_attendees(event_id: str, organizer_id: str) -> Dict[str, Any]:
-        """Get all attendees (ticket holders) for an event."""
         ScanService._verify_event_ownership(event_id, organizer_id)
 
-        result = supabase.table("tickets")\
+        result = supabase_admin.table("tickets")\
             .select("id, status, ticket_type_name, checked_in_at, created_at, customer_email, customer_profiles(full_name)")\
             .eq("event_id", event_id)\
             .order("created_at", desc=True)\
@@ -202,10 +195,9 @@ class ScanService:
 
     @staticmethod
     def get_event_orders(event_id: str, organizer_id: str) -> Dict[str, Any]:
-        """Get all orders placed for an event."""
         ScanService._verify_event_ownership(event_id, organizer_id)
 
-        result = supabase.table("orders")\
+        result = supabase_admin.table("orders")\
             .select("*, ticket_types(name), customer_profiles(full_name, email)")\
             .eq("event_id", event_id)\
             .order("created_at", desc=True)\
@@ -218,8 +210,7 @@ class ScanService:
             tt = o.pop("ticket_types", {}) or {}
             profile = o.pop("customer_profiles", {}) or {}
 
-            # Fetch tickets for this order
-            tickets_res = supabase.table("tickets")\
+            tickets_res = supabase_admin.table("tickets")\
                 .select("id, status, ticket_type_name")\
                 .eq("order_id", o["id"])\
                 .execute()
@@ -249,8 +240,7 @@ class ScanService:
 
     @staticmethod
     def get_all_tickets(organizer_id: str) -> Dict[str, Any]:
-        """Get all tickets across all of the organizer's events."""
-        # First get all event IDs belonging to this organizer
+        # Use anon client for events — organizer owns them so RLS passes
         events_result = supabase.table("events")\
             .select("id, title")\
             .eq("organizer_id", organizer_id)\
@@ -262,8 +252,8 @@ class ScanService:
         if not event_ids:
             return {"tickets": [], "total": 0}
 
-        # Fetch all tickets for those events
-        result = supabase.table("tickets")\
+        # Use service role to read tickets across all events
+        result = supabase_admin.table("tickets")\
             .select("*, customer_profiles(full_name)")\
             .in_("event_id", event_ids)\
             .order("created_at", desc=True)\
@@ -290,8 +280,7 @@ class ScanService:
 
     @staticmethod
     def get_ticket_by_id(ticket_id: str, organizer_id: str) -> Dict[str, Any]:
-        """Get a single ticket — organizer must own the event it belongs to."""
-        result = supabase.table("tickets")\
+        result = supabase_admin.table("tickets")\
             .select("*, events(title, organizer_id), customer_profiles(full_name)")\
             .eq("id", ticket_id)\
             .single()\
@@ -307,7 +296,6 @@ class ScanService:
         event = ticket.pop("events", {}) or {}
         profile = ticket.pop("customer_profiles", {}) or {}
 
-        # Verify organizer owns the event this ticket belongs to
         if event.get("organizer_id") != organizer_id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
