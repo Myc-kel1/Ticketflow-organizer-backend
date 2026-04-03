@@ -1,5 +1,3 @@
-# ADD TO: organizer backend → app/services/scan_service.py
-
 from typing import Dict, Any, List, Optional
 from fastapi import HTTPException, status
 from datetime import datetime, timezone
@@ -10,7 +8,6 @@ class ScanService:
 
     @staticmethod
     def _verify_event_ownership(event_id: str, organizer_id: str) -> Dict[str, Any]:
-        """Confirm this event belongs to the organizer."""
         result = supabase.table("events")\
             .select("id, title, capacity")\
             .eq("id", event_id)\
@@ -26,14 +23,12 @@ class ScanService:
 
     @staticmethod
     def scan_ticket(event_id: str, ticket_id: str, organizer_id: str) -> Dict[str, Any]:
-        # Verify organizer owns this event
         event = ScanService._verify_event_ownership(event_id, organizer_id)
 
-        # Look up the ticket using service role to bypass RLS
+        # Search by ticket ID only first
         ticket_result = supabase_admin.table("tickets")\
-            .select("*, customer_profiles(full_name, email)")\
+            .select("*")\
             .eq("id", ticket_id)\
-            .eq("event_id", event_id)\
             .single()\
             .execute()
 
@@ -41,13 +36,22 @@ class ScanService:
             return {
                 "valid": False,
                 "ticket_id": ticket_id,
-                "message": "Ticket not found for this event. It may belong to a different event or does not exist.",
+                "message": "Ticket not found. Please check the ticket ID and try again.",
                 "event_title": event["title"]
             }
 
         ticket = ticket_result.data
-        profile = ticket.pop("customer_profiles", {}) or {}
-        attendee_name = profile.get("full_name") or ticket.get("customer_email", "Unknown")
+
+        # Check if ticket belongs to the correct event
+        if ticket["event_id"] != event_id:
+            return {
+                "valid": False,
+                "ticket_id": ticket_id,
+                "message": "This ticket is for a different event. Please select the correct event in the scanner.",
+                "event_title": event["title"]
+            }
+
+        attendee_name = ticket.get("customer_email", "Unknown")
         attendee_email = ticket.get("customer_email")
 
         if ticket["status"] == "used":
@@ -93,7 +97,6 @@ class ScanService:
     def get_event_stats(event_id: str, organizer_id: str) -> Dict[str, Any]:
         event = ScanService._verify_event_ownership(event_id, organizer_id)
 
-        # Use service role to bypass RLS on tickets
         tickets_result = supabase_admin.table("tickets")\
             .select("id, status, ticket_type_name")\
             .eq("event_id", event_id)\
@@ -104,7 +107,6 @@ class ScanService:
         tickets_checked_in = sum(1 for t in tickets if t["status"] == "used")
         tickets_active = sum(1 for t in tickets if t["status"] == "active")
 
-        # Use service role for orders
         orders_result = supabase_admin.table("orders")\
             .select("amount, quantity")\
             .eq("event_id", event_id)\
@@ -114,7 +116,6 @@ class ScanService:
         total_revenue = sum(float(o["amount"]) for o in (orders_result.data or []))
         check_in_rate = round((tickets_checked_in / tickets_sold * 100), 1) if tickets_sold > 0 else 0.0
 
-        # Ticket type breakdown
         type_counts: Dict[str, Dict] = {}
         for t in tickets:
             name = t.get("ticket_type_name") or "General"
@@ -124,7 +125,6 @@ class ScanService:
             if t["status"] == "used":
                 type_counts[name]["checked_in"] += 1
 
-        # Merge with ticket type capacity data
         tt_result = supabase_admin.table("ticket_types")\
             .select("name, quantity_available, quantity_sold, price")\
             .eq("event_id", event_id)\
@@ -165,17 +165,16 @@ class ScanService:
         ScanService._verify_event_ownership(event_id, organizer_id)
 
         result = supabase_admin.table("tickets")\
-            .select("id, status, ticket_type_name, checked_in_at, created_at, customer_email, customer_profiles(full_name)")\
+            .select("id, status, ticket_type_name, checked_in_at, created_at, customer_email")\
             .eq("event_id", event_id)\
             .order("created_at", desc=True)\
             .execute()
 
         attendees = []
         for t in (result.data or []):
-            profile = t.pop("customer_profiles", {}) or {}
             attendees.append({
                 "ticket_id": t["id"],
-                "attendee_name": profile.get("full_name") or t.get("customer_email", "Unknown"),
+                "attendee_name": t.get("customer_email", "Unknown"),
                 "attendee_email": t.get("customer_email"),
                 "ticket_type": t.get("ticket_type_name"),
                 "status": t["status"],
@@ -198,7 +197,7 @@ class ScanService:
         ScanService._verify_event_ownership(event_id, organizer_id)
 
         result = supabase_admin.table("orders")\
-            .select("*, ticket_types(name), customer_profiles(full_name, email)")\
+            .select("*, ticket_types(name)")\
             .eq("event_id", event_id)\
             .order("created_at", desc=True)\
             .execute()
@@ -208,7 +207,6 @@ class ScanService:
 
         for o in (result.data or []):
             tt = o.pop("ticket_types", {}) or {}
-            profile = o.pop("customer_profiles", {}) or {}
 
             tickets_res = supabase_admin.table("tickets")\
                 .select("id, status, ticket_type_name")\
@@ -222,8 +220,8 @@ class ScanService:
             orders.append({
                 "id": o["id"],
                 "reference": o["reference"],
-                "customer_email": o.get("customer_email") or profile.get("email"),
-                "customer_name": profile.get("full_name"),
+                "customer_email": o.get("customer_email"),
+                "customer_name": o.get("customer_email"),
                 "quantity": o["quantity"],
                 "amount": amount,
                 "status": o["status"],
@@ -240,7 +238,6 @@ class ScanService:
 
     @staticmethod
     def get_all_tickets(organizer_id: str) -> Dict[str, Any]:
-        # Use anon client for events — organizer owns them so RLS passes
         events_result = supabase.table("events")\
             .select("id, title")\
             .eq("organizer_id", organizer_id)\
@@ -252,23 +249,21 @@ class ScanService:
         if not event_ids:
             return {"tickets": [], "total": 0}
 
-        # Use service role to read tickets across all events
         result = supabase_admin.table("tickets")\
-            .select("*, customer_profiles(full_name)")\
+            .select("*")\
             .in_("event_id", event_ids)\
             .order("created_at", desc=True)\
             .execute()
 
         tickets = []
         for t in (result.data or []):
-            profile = t.pop("customer_profiles", {}) or {}
             tickets.append({
                 "id": t["id"],
                 "event_id": t["event_id"],
                 "event_title": event_map.get(t["event_id"]),
                 "order_id": t.get("order_id"),
                 "customer_email": t.get("customer_email"),
-                "customer_name": profile.get("full_name"),
+                "customer_name": t.get("customer_email"),
                 "ticket_type": t.get("ticket_type_name"),
                 "status": t["status"],
                 "qr_code_url": t.get("qr_code_url"),
@@ -281,7 +276,7 @@ class ScanService:
     @staticmethod
     def get_ticket_by_id(ticket_id: str, organizer_id: str) -> Dict[str, Any]:
         result = supabase_admin.table("tickets")\
-            .select("*, events(title, organizer_id), customer_profiles(full_name)")\
+            .select("*, events(title, organizer_id)")\
             .eq("id", ticket_id)\
             .single()\
             .execute()
@@ -294,7 +289,6 @@ class ScanService:
 
         ticket = result.data
         event = ticket.pop("events", {}) or {}
-        profile = ticket.pop("customer_profiles", {}) or {}
 
         if event.get("organizer_id") != organizer_id:
             raise HTTPException(
@@ -308,7 +302,7 @@ class ScanService:
             "event_title": event.get("title"),
             "order_id": ticket.get("order_id"),
             "customer_email": ticket.get("customer_email"),
-            "customer_name": profile.get("full_name"),
+            "customer_name": ticket.get("customer_email"),
             "ticket_type": ticket.get("ticket_type_name"),
             "status": ticket["status"],
             "qr_code_url": ticket.get("qr_code_url"),
